@@ -1,0 +1,4 @@
+fnc/__pycache__/*
+*.pyc
+fnc/*.pyc
+.DS*
