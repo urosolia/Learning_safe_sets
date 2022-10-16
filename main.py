@@ -1,13 +1,13 @@
 import numpy as np
-from polytope import polytope
-from utils import system, dlqr
+from fnc.polytope import polytope
+from fnc.utils import system, dlqr
 import pdb
 import matplotlib.pyplot as plt
-from iterativempc import IterativeMPC
-from mpc import MPC
+from fnc.iterativempc import IterativeMPC
+from fnc.mpc import MPC
 from matplotlib import rc
-from build_robust_invariant import BuildRobustInvariant
-from build_control_invariant import BuildControlInvariant
+from fnc.build_robust_invariant import BuildRobustInvariant
+from fnc.build_control_invariant import BuildControlInvariant
 rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 rc('text', usetex=True)
 
