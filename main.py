@@ -1,6 +1,6 @@
 import numpy as np
 from fnc.polytope import polytope
-from fnc.utils import system, dlqr
+from fnc.utils import system, dlqr, write_object_data_to_file
 import pdb
 import matplotlib.pyplot as plt
 from fnc.iterativempc import IterativeMPC
@@ -8,92 +8,83 @@ from fnc.mpc import MPC
 from matplotlib import rc
 from fnc.build_robust_invariant import BuildRobustInvariant
 from fnc.build_control_invariant import BuildControlInvariant
+from fnc.system import systems_def
 rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 rc('text', usetex=True)
 
 # # =================================================================================================
-# Initialize system's parameters, constraint sets, and cost function matrices
-A = np.array([[1, 1],
-	          [0, 1]]);
-B = np.array([[0], 
-			  [1]]);
 
-barA = np.array([[0.995, 1],
-				[0, 0.995]]);
-# barA = np.array([[1, 1],
-# 	          [0, 1]]);
-barB = np.array([[0], 
-			  	[1]]);
+# opt='double_integrator_3D'
+opt='double_integrator'
+build_O = True
+store_all_data_flag = False
 
-w_inf = 0.1  # infinity norm of the disturbance
-e_inf = 0.05  # infinity norm of the disturbance
-
-alpha = 3
-
+A, B, barA, barB, alpha, w_inf, e_inf, x0_mpc, x0_lmpc, u_max = systems_def(opt)
 
 bx =  []
 bx.append( 10*np.ones(A.shape[1])) # max state box constraints
 bx.append(-10*np.ones(A.shape[1])) # min state box constraints
 
 bu = []
-bu.append(2.0*np.ones(B.shape[1]))  # max input box constraints
-bu.append(-2.0*np.ones(B.shape[1]))  # max input box constraints
+bu.append(u_max*np.ones(B.shape[1]))  # max input box constraints
+bu.append(-u_max*np.ones(B.shape[1]))  # max input box constraints
 
-Q      = np.eye(2)
-R      = 0.1*np.eye(1)
+Q      = np.eye(A.shape[1])
+R      = 0.1*np.eye(B.shape[1])
 
 # =================================================================================================
 # Compute robust invariant from data
-maxRollOut = 50
+maxRollOut = 10
 maxTime    = 40
-maxIt      = 20
+maxIt      = 500
 
-x0    = np.array([-0.0, 0.0])   # initial condition
+w_bar = w_inf+e_inf
+x0    = np.array([0.0]*A.shape[1])   # initial condition
 sys        = system(A, B, w_inf, x0) # initialize system object
-sys_with_e = system(A, B, w_inf+e_inf, x0) # initialize system object
-sys_aug    = system(A, B, alpha * (w_inf + e_inf), x0) # initialize system object
+sys_with_e = system(A, B, w_bar+e_inf, x0) # initialize system object
+sys_aug    = system(A, B, alpha * (w_bar + e_inf), x0) # initialize system object
 
 verticesW = sys_with_e.w_v # Vertices of true disturbance
-build_robust_invariant = BuildRobustInvariant(barA, barB, A, B, Q, R, bx, bu, verticesW, maxIt, maxTime, maxRollOut, sys_aug)
+build_robust_invariant = BuildRobustInvariant(barA, barB, A, B, Q, R, bx, bu, verticesW, maxIt, maxTime, maxRollOut, sys_aug, build_O)
 build_robust_invariant.build_robust_invariant()
 
 # =================================================================================================
 # MPC with robust invariant \hat{\mathcal{O}}^r as terminal constraint
 N  = 5
-Qf = np.eye(2)
+Qf = np.eye(A.shape[1])
 
 # Initialize mpc parameters
 build_robust_invariant.shrink_constraint()
 mpc = MPC(N, barA, barB, Q, R, Qf, 
 			build_robust_invariant.bx_shrink, 
-			build_robust_invariant.bu_shrink, 
+			build_robust_invariant.bu_pi_shrink, 
 			build_robust_invariant.K, 
 			np.array(build_robust_invariant.x_data),
 			np.array(build_robust_invariant.x_data)
 			)
 
-x0    = np.array([-9, 1.0])   # initial condition
+x0    = x0_mpc   # initial condition
 sys        = system(A, B, w_inf, x0) # initialize system object
 
 # =============================
 # Compute control invariant from data
 x_cl = []; u_cl = [];
-maxRollOut = 50
+maxRollOut = 20
 maxTime    = 10
-maxIt      = 10
+maxIt      = 100
 
 build_control_invariant = BuildControlInvariant(barA, barB, maxIt, maxTime, maxRollOut,
 												 sys, mpc, 
 												 build_robust_invariant.x_data.copy(),
 												 build_robust_invariant.u_data.copy(),
-												 store_all_data_flag = True)
+												 store_all_data_flag = store_all_data_flag)
 
 build_control_invariant.build_control_invariant()
 
 # =================================================================================================
 # MPC with robust invariant \hat{\mathcal{O}}^r as terminal constraint
 N  = 5
-Qf = np.eye(2)
+Qf = np.eye(A.shape[1])
 
 # Initialize mpc parameters
 mpc_r = MPC(N, barA, barB, Q, R, Qf, 
@@ -104,7 +95,7 @@ mpc_r = MPC(N, barA, barB, Q, R, Qf,
 			np.array(build_control_invariant.x_data)
 			)
 
-x0_new    = np.array([-10, 1.0])   # initial condition
+x0_new    = x0_lmpc   # initial condition
 sys        = system(A, B, w_inf, x0_new) # initialize system object
 
 maxRollOut = 50
@@ -123,7 +114,8 @@ for rollOut in range(0, maxRollOut): # Roll-out loop
 	u_cl.append(np.array(sys.u))
 	
 # =============================
-
+write_object_data_to_file(build_robust_invariant,opt,'rob_inv')
+write_object_data_to_file(build_control_invariant,opt,'cntr_inv')
 # =================================================================================================
 # Plotting 
 if A.shape[0]==2:
@@ -135,8 +127,8 @@ if A.shape[0]==2:
 			plt.plot(build_robust_invariant.x_cl[it][:,0], build_robust_invariant.x_cl[it][:,1], '*b')
 	minimal_RPI = polytope(vertices=build_robust_invariant.verticesO)
 	data_RPI = polytope(vertices=np.array(build_robust_invariant.x_data))
-	minimal_RPI.plot2DPolytope('r', linestyle='-*', label = 'Minimal RPI')
-	data_RPI.plot2DPolytope('k', linestyle='-o', label = 'RPI from Algorithm 1')
+	minimal_RPI.plot2DPolytope('r', linestyle='-*', label = 'Minimal robust invariant')
+	data_RPI.plot2DPolytope('k', linestyle='-o', label = 'Robust invariant from Algorithm 1')
 	# plt.plot(np.array(build_robust_invariant.x_data)[:,0], np.array(build_robust_invariant.x_data)[:,1], '*k', label='Historical data')
 	plt.legend()
 	plt.savefig('invariant.pdf')
@@ -154,7 +146,7 @@ for x in build_robust_invariant.x_data:
 		plt.plot(x_next[0], x_next[1], '*g')
 		
 data_RPI = polytope(vertices=np.array(build_robust_invariant.x_data))
-data_RPI.plot2DPolytope('k', linestyle='-o', label = 'RPI from Algorithm 1')
+data_RPI.plot2DPolytope('k', linestyle='-o', label = 'Robust invariant from Algorithm 1')
 plt.xlabel('$x_1$')
 plt.ylabel('$x_2$')
 # for it in range(0,maxIt):
@@ -210,7 +202,7 @@ if A.shape[0]==2:
 	X.plot2DPolytope('k', linestyle='-', label = 'Constraint Set')
 	CS.plot2DPolytope('r', linestyle='-ob', label = '$\mathcal{CS}^r$')
 	# plt.plot(np.array(build_robust_invariant.x_data)[:,0], np.array(build_robust_invariant.x_data)[:,1], '*k', label='Historical data')
-	plt.plot(x0[0], x0[1], 'sg', label='Initial condition for policy $\kappa$')
+	plt.plot(x0[0], x0[1], 'sg', label='Initial condition for policy $\pi_2$')
 	plt.plot(x0_new[0], x0_new[1], 'om', label='Initial condition policy $\pi^{{MPC}, r}$')
 	plt.legend()
 	plt.xlabel('$x_1$')

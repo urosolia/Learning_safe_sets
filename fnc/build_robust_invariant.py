@@ -15,12 +15,14 @@ from scipy.optimize import linprog
 
 class BuildRobustInvariant(object):
 
-    def __init__(self, barA, barB, A, B, Q, R, bx, bu, verticesW, maxIt, maxTime, maxRollOut, sys_aug):
+    def __init__(self, barA, barB, A, B, Q, R, bx, bu, verticesW, maxIt, maxTime, maxRollOut, sys_aug, build_O = False):
         # Data roll-outs current iteration
         self.x_data     = [] # list of stored closedLoop
+        self.x_data_to_check     = [] # list of stored closedLoop
         self.u_data     = [] # list of stored closedLoop
 
         self.A = A
+        self.n = A.shape[1]
         self.B = B
         self.barA = barA
         self.barB = barB
@@ -33,12 +35,16 @@ class BuildRobustInvariant(object):
         self.sys_aug = sys_aug
         self.maxRollOut= maxRollOut
 
+        self.x0 = np.array([0]*self.n)
+
         self.itCounter = 0
         
         self.verticesW = verticesW
-        self.computeRobutInvariant()
-        self.A_O, self.b_O = pypoman.duality.compute_polytope_halfspaces(self.verticesO)
-        self.A_W, self.b_W = pypoman.duality.compute_polytope_halfspaces(self.verticesW)
+        self.dlqr()
+        if build_O:
+            self.computeRobutInvariant()
+            self.A_O, self.b_O = pypoman.duality.compute_polytope_halfspaces(self.verticesO)
+            self.A_W, self.b_W = pypoman.duality.compute_polytope_halfspaces(self.verticesW)
 
     def build_robust_invariant(self):
         # Compute robust invariant from data
@@ -46,7 +52,8 @@ class BuildRobustInvariant(object):
 
         for it in range(0,self.maxIt):
             for rollOut in range(0, self.maxRollOut): # Roll-out loop
-                self.sys_aug.reset_IC() # Reset initial conditions
+                # self.sys_aug.reset_IC() # Reset initial conditions
+                self.sys_aug.reset_IC_given_x0(self.x0) # Reset initial conditions
                 print("Start roll out: ", rollOut, " of iteration: ", it)
                 for t in range(0,self.maxTime): # Time loop
                     # ut = mpc.solve(sys.x[-1])
@@ -62,6 +69,10 @@ class BuildRobustInvariant(object):
                 # impc.addData(x_cl[-1], u_cl[-1]) # Add data while performing the task
             if self.check_robust_invariance():
                 print("Robust invariant found")
+                self.seen_data = (it+1)*(self.maxRollOut)*(self.maxTime)
+                print("Total data seen: ", self.seen_data)
+                print("Data stored: ", len(self.x_data))
+
                 break
             else:
                 print("Robust invariant NOT found")
@@ -74,9 +85,11 @@ class BuildRobustInvariant(object):
                 contained = self.check_if_in_cvx_hull(x)
                 if contained == False:
                     self.x_data.append(x)
+                    self.x_data_to_check.append(x)
                     self.u_data.append(u)
             else:
                 self.x_data.append(x)
+                self.x_data_to_check.append(x)
                 self.u_data.append(u)
 
     def check_if_in_cvx_hull(self, x):
@@ -90,19 +103,31 @@ class BuildRobustInvariant(object):
 
     def check_robust_invariance(self):
         robust_invariant = True
-        for x in self.x_data:
-            for w in self.verticesW:
-                x_next = np.dot(self.barAcl,x) + w
-                contained = self.check_if_in_cvx_hull(x_next)
-                if not contained:
-                    robust_invariant = False
-                    return robust_invariant
+        print("len(self.x_data_to_check): ",len(self.x_data_to_check))
+        for index in range(len(self.x_data_to_check)):
+            # Remove the current element
+            current_element = self.x_data_to_check.pop()
+            print("len(self.x_data_to_check): ",len(self.x_data_to_check))
 
+            # Check the condition
+            contained = True
+            for w in self.verticesW:
+                x_next = np.dot(self.barAcl, current_element) + w
+                contained = self.check_if_in_cvx_hull(x_next) and contained
+
+            if not contained:
+                robust_invariant = False
+                # Re-add the element before returning
+                self.x_data_to_check.append(current_element)
+                self.x0 = current_element
+                print("self.x0: ",self.x0)
+                print("len(self.x_data_to_check): ",len(self.x_data_to_check))
+                return robust_invariant
         return robust_invariant
 
     def computeRobutInvariant(self):
-        self.O_v = [np.array([0,0])]
-        self.dlqr()
+        self.O_v = [np.array([0]*self.n)]
+        
         print("Compute robust invariant")
         # TO DO:
         # - add check for convergence
@@ -148,5 +173,12 @@ class BuildRobustInvariant(object):
         self.bu_shrink.append(self.bu[0]-array_data_kx.max(axis=1))
         self.bu_shrink.append(self.bu[1]-array_data_kx.min(axis=1))
 
+        self.bu_pi_shrink = []
+        self.bu_pi_shrink.append(self.bu_shrink[0]-array_data_kx.max(axis=1))
+        self.bu_pi_shrink.append(self.bu_shrink[1]-array_data_kx.min(axis=1))
+
+        print("shrunk input pi constraints min: ", self.bu_pi_shrink[1])
+        print("shrunk input pi constraints max: ", self.bu_pi_shrink[0])
         print("shrunk input constraints max: ", self.bu_shrink[0])
         print("shrunk input constraints min: ", self.bu_shrink[1])
+        

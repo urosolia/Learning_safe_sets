@@ -39,10 +39,11 @@ class BuildControlInvariant(object):
     def build_control_invariant(self):
         # Compute robust invariant from data
         x_cl = []; u_cl = [];
+        x0 = self.sys.x0
 
         for it in range(0,self.maxIt):
             for rollOut in range(0, self.maxRollOut): # Roll-out loop
-                self.sys.reset_IC() # Reset initial conditions
+                self.sys.reset_IC_given_x0(x0)
                 print("Start roll out: ", rollOut, " of iteration: ", it)
                 for t in range(0,self.maxTime): # Time loop
                     ut = self.mpc.solve(self.sys.x[-1])
@@ -57,12 +58,16 @@ class BuildControlInvariant(object):
                     self.x_cl_data.append(np.array(self.sys.x))
                     self.u_cl_data.append(np.array(self.sys.u))
 
-
-            if self.check_control_invariance():
+            check_control_invariance_flag, x0 = self.check_control_invariance()
+            if check_control_invariance_flag:
                 print("Control invariant found")
+                self.seen_data = (it+1)*(self.maxRollOut)*(self.maxTime)
+                print("Total data seen: ", self.seen_data)
+                print("Data stored: ", len(self.x_data))
                 break
             else:
                 print("Control invariant NOT found")
+                print("New x0: ", x0)
         self.x_cl = x_cl
         self.u_cl = u_cl
 
@@ -93,6 +98,6 @@ class BuildControlInvariant(object):
             contained = self.check_if_in_cvx_hull(x_next)
             if not contained:
                 control_invariant = False
-                return control_invariant
+                return control_invariant, x
 
-        return control_invariant
+        return control_invariant, x
